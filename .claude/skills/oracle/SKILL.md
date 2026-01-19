@@ -19,22 +19,30 @@ Requires `OPENAI_API_KEY` environment variable to be set.
 
 ## Usage
 
-### Review Current File or Directory
-
-```bash
-codex --model gpt-5.2-codex --approval-mode full-auto "Review this code for bugs, security issues, and architecture problems. Be specific about file paths and line numbers."
-```
+Use the `codex review` subcommand for non-interactive code reviews. The `-m` flag sets the model.
 
 ### Review Specific Files
 
 ```bash
-codex --model gpt-5.2-codex --approval-mode full-auto "Review <file_path> for bugs, security issues, and architecture problems. Be specific about file paths and line numbers."
+codex -m gpt-5.2-codex review "Review <file_path> for bugs, security issues, and architecture problems. Output format: file:line - [HIGH/MEDIUM/LOW] - description. Focus only on actual issues, not style."
 ```
 
-### Review Recent Changes
+### Review Uncommitted Changes
 
 ```bash
-codex --model gpt-5.2-codex --approval-mode full-auto "Review the recent git changes for bugs, security issues, and architecture problems. Use git diff to see what changed."
+codex -m gpt-5.2-codex review --uncommitted "Review these changes for bugs, security issues, and architecture problems."
+```
+
+### Review Changes Against a Branch
+
+```bash
+codex -m gpt-5.2-codex review --base main "Review changes against main branch for bugs and issues."
+```
+
+### Review a Specific Commit
+
+```bash
+codex -m gpt-5.2-codex review --commit <sha> "Review this commit for bugs and issues."
 ```
 
 ## Prompting GPT-5.2 Codex Effectively
@@ -77,11 +85,25 @@ List each finding with file:line and severity rating.
 
 ## Workflow
 
-1. Determine what to review (current directory, specific files, or git changes)
+1. Determine what to review (specific files, uncommitted changes, branch diff, or commit)
 2. Select appropriate review prompt from examples above or customize
-3. Run codex command with `--model gpt-5.2-codex --approval-mode full-auto`
+3. Run `codex -m gpt-5.2-codex review` with the appropriate flags
 4. Present findings to user with file paths and line numbers
 5. Offer to help address any issues identified
+
+## CLI Reference
+
+```
+codex review [OPTIONS] [PROMPT]
+
+Options:
+  --uncommitted        Review staged, unstaged, and untracked changes
+  --base <BRANCH>      Review changes against the given base branch
+  --commit <SHA>       Review the changes introduced by a commit
+  --title <TITLE>      Optional commit title to display in the review summary
+  -m, --model <MODEL>  Model to use (e.g., gpt-5.2-codex)
+  -c, --config <k=v>   Override config values (e.g., -c approval=never)
+```
 
 ## Reference
 

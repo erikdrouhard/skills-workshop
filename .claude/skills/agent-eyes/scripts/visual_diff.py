@@ -236,9 +236,14 @@ def main():
         diff_img, stats = create_diff_image(before, after_resized, args.threshold)
         result = create_side_by_side(before, after_resized, diff_img)
     elif args.mode == "overlay":
-        result = create_overlay_diff(before, after)
+        # Resize after to match before for consistent comparison
+        if before.size != after.size:
+            after_resized = after.resize(before.size, Image.Resampling.LANCZOS)
+        else:
+            after_resized = after
+        result = create_overlay_diff(before, after_resized)
         stats = {
-            "diff_percentage": calculate_diff_percentage(before, after),
+            "diff_percentage": calculate_diff_percentage(before, after_resized),
             "mode": "overlay"
         }
 
