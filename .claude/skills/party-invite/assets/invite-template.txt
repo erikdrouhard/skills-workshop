@@ -1,0 +1,15 @@
+Subject: You're Invited! 🎉
+
+Hey {{name}},
+
+You're officially invited to an awesome party!
+
+📅 **When:** {{date}}
+👔 **Dress Code:** {{dress_code}}
+
+We'd love to see you there! It's going to be a blast.
+
+Please let me know if you can make it!
+
+Cheers,
+Your Host
