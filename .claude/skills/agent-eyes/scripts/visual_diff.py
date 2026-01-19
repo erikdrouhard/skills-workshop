@@ -29,6 +29,9 @@ except ImportError:
     print("Error: Pillow not installed. Run: uv pip install Pillow")
     sys.exit(1)
 
+# Protect against decompression bombs (malicious large images)
+Image.MAX_IMAGE_PIXELS = 178956970  # ~13k x 13k, Pillow's default warning threshold
+
 
 def calculate_diff_percentage(img1: Image.Image, img2: Image.Image) -> float:
     """Calculate the percentage of pixels that differ between two images."""
@@ -38,10 +41,11 @@ def calculate_diff_percentage(img1: Image.Image, img2: Image.Image) -> float:
     diff = ImageChops.difference(img1.convert("RGB"), img2.convert("RGB"))
     diff_gray = diff.convert("L")
 
-    # Count non-zero pixels
-    pixels = list(diff_gray.getdata())
-    total = len(pixels)
-    changed = sum(1 for p in pixels if p > 0)
+    # Use histogram instead of loading all pixels into memory
+    histogram = diff_gray.histogram()
+    total = img1.size[0] * img1.size[1]
+    unchanged = histogram[0]  # Count of zero-value pixels
+    changed = total - unchanged
 
     return (changed / total) * 100
 
@@ -67,38 +71,35 @@ def create_diff_image(
     threshold_value = int(threshold * 2.55)  # Convert 0-100 to 0-255
     diff_binary = diff_gray.point(lambda p: 255 if p > threshold_value else 0)
 
-    # Create highlighted diff image
-    result = after_rgb.copy()
-    result_pixels = result.load()
-    diff_pixels = diff_binary.load()
-    width, height = result.size
-
-    changed_regions = []
-    current_region = None
-
-    for y in range(height):
-        for x in range(width):
-            if diff_pixels[x, y] > 0:
-                # Highlight changed pixel in red
-                r, g, b = result_pixels[x, y]
-                result_pixels[x, y] = (255, int(g * 0.3), int(b * 0.3))
-
-                # Track regions (simple bounding box)
-                if current_region is None:
-                    current_region = [x, y, x, y]
-                else:
-                    current_region[2] = max(current_region[2], x)
-                    current_region[3] = max(current_region[3], y)
-
-    # Calculate diff stats
+    width, height = before.size
     total_pixels = width * height
-    changed_pixels = sum(1 for y in range(height) for x in range(width) if diff_pixels[x, y] > 0)
-    diff_percentage = (changed_pixels / total_pixels) * 100
+
+    # Use histogram to count changed pixels (no second loop needed)
+    histogram = diff_binary.histogram()
+    changed_pixels = total_pixels - histogram[0]
+
+    # Create red highlight using vectorized channel operations
+    r, g, b = after_rgb.split()
+
+    # Create mask where changes occurred (inverted for composite)
+    mask = diff_binary
+
+    # For changed pixels: R=255, G=G*0.3, B=B*0.3
+    red_full = Image.new("L", (width, height), 255)
+    g_dimmed = g.point(lambda p: int(p * 0.3))
+    b_dimmed = b.point(lambda p: int(p * 0.3))
+
+    # Composite: where mask is white (255), use new values; where black, keep original
+    r_result = Image.composite(red_full, r, mask)
+    g_result = Image.composite(g_dimmed, g, mask)
+    b_result = Image.composite(b_dimmed, b, mask)
+
+    result = Image.merge("RGB", (r_result, g_result, b_result))
 
     stats = {
         "total_pixels": total_pixels,
         "changed_pixels": changed_pixels,
-        "diff_percentage": round(diff_percentage, 2),
+        "diff_percentage": round((changed_pixels / total_pixels) * 100, 2),
         "dimensions": {"width": width, "height": height}
     }
 
@@ -195,12 +196,26 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate threshold (clamp to 0-100)
+    args.threshold = max(0, min(100, args.threshold))
+
     # Load images
     try:
         before = Image.open(args.before)
         after = Image.open(args.after)
+    except Image.DecompressionBombError as e:
+        error_msg = f"Image too large (possible decompression bomb): {e}"
+        if args.json:
+            print(json.dumps({"success": False, "error": error_msg}))
+        else:
+            print(error_msg, file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print(f"Error loading images: {e}", file=sys.stderr)
+        error_msg = f"Error loading images: {e}"
+        if args.json:
+            print(json.dumps({"success": False, "error": error_msg}))
+        else:
+            print(error_msg, file=sys.stderr)
         sys.exit(1)
 
     # Generate output filename if not provided
@@ -213,8 +228,13 @@ def main():
     if args.mode == "diff":
         result, stats = create_diff_image(before, after, args.threshold)
     elif args.mode == "side-by-side":
-        diff_img, stats = create_diff_image(before, after, args.threshold)
-        result = create_side_by_side(before, after, diff_img)
+        # Resize after to match before for consistent comparison
+        if before.size != after.size:
+            after_resized = after.resize(before.size, Image.Resampling.LANCZOS)
+        else:
+            after_resized = after
+        diff_img, stats = create_diff_image(before, after_resized, args.threshold)
+        result = create_side_by_side(before, after_resized, diff_img)
     elif args.mode == "overlay":
         result = create_overlay_diff(before, after)
         stats = {
@@ -223,7 +243,15 @@ def main():
         }
 
     # Save result
-    result.save(output)
+    try:
+        result.save(output)
+    except Exception as e:
+        error_msg = f"Failed to save output: {e}"
+        if args.json:
+            print(json.dumps({"success": False, "error": error_msg}))
+        else:
+            print(error_msg, file=sys.stderr)
+        sys.exit(1)
 
     # Output results
     output_data = {
